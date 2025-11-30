@@ -1,9 +1,6 @@
+use core::f32;
 use std::{
-    collections::HashMap,
-    env,
-    fs::{self, File},
-    io::{BufRead, BufReader},
-    process::exit,
+    collections::HashMap, env, fs::{File}, io::{BufRead, BufReader}, process::exit
 };
 
 struct WeatherStation {
@@ -13,7 +10,8 @@ struct WeatherStation {
     total_measurements: f32,
 }
 
-fn main() {
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut weather_stations: HashMap<String, WeatherStation> = HashMap::new();
 
     let args: Vec<String> = env::args().collect();
@@ -24,12 +22,17 @@ fn main() {
         exit(-1)
     });
 
-    let f = BufReader::new(file);
-    for line in f.lines() {
-        let line = line.unwrap();
-        let splitted: Vec<&str> = line.split(";").collect();
-        let measurement = splitted[1].parse::<f32>().unwrap();
-        match weather_stations.get_mut(splitted[0]) {
+    let mut f = BufReader::new(file);
+   
+    let mut buf: Vec<u8> = Vec::new();
+    while f.read_until(b'\n', &mut buf)? != 0 {
+        let sep = buf.iter().position(|&b| b == b';').unwrap();
+        let station_bytes = &buf[..sep];
+        let meas_bytes  = &buf[sep + 1..];
+
+        let station = unsafe {std::str::from_utf8_unchecked(station_bytes)};
+        let measurement: f32 = parse_f32(meas_bytes);
+        match weather_stations.get_mut(station) {
             Some(v) => {
                 v.total_measurements += 1.0;
                 if measurement < v.min_measurement {
@@ -40,11 +43,11 @@ fn main() {
                     v.max_measurement = measurement
                 }
 
-                v.avg_measurement = (measurement - v.avg_measurement) / v.total_measurements
+                v.avg_measurement += (measurement - v.avg_measurement) / v.total_measurements
             }
             None => {
                 weather_stations.insert(
-                    splitted[0].to_owned(),
+                    station.to_owned(),
                     WeatherStation {
                         min_measurement: measurement,
                         max_measurement: measurement,
@@ -54,6 +57,7 @@ fn main() {
                 );
             }
         }
+        buf.clear();
     }
 
     let mut sorted: Vec<_> = weather_stations.iter().collect();
@@ -67,10 +71,35 @@ fn main() {
         }
 
         print!(
-            "{}={:.1}/{:.1}/{:.1}",
-            key, val.min_measurement, val.avg_measurement, val.max_measurement
+            "{}={:?}/{:?}/{:?}",
+            key, val.min_measurement, val.max_measurement, val.avg_measurement.round()
         );
     }
 
     println!("}}");
+    Ok(())
+}
+
+fn parse_f32(bytes: &[u8]) -> f32 {
+    let mut i = 0;
+    let mut sign = 1.0;
+
+    if bytes[i] == b'-' {
+        sign = -1.0;
+        i += 1;
+    }
+
+    let mut int_part = (bytes[i] - b'0') as f32;
+    i += 1;
+
+    if bytes[i] != b'.' {
+        int_part = int_part * 10.0 + (bytes[i] - b'0') as f32;
+        i += 1;
+    }
+
+    i += 1;
+
+    let frac = (bytes[i] - b'0') as f32 * 0.1;
+
+    sign * (int_part + frac)
 }
